@@ -946,6 +946,29 @@ def _source_stamp(project: Path) -> dict:
             "made": {s: (stages.get(s) or {}).get("at") for s in ("generate", "build")}}
 
 
+def _carry_on(project: Path, src: Path, out: Path, scratch: Path, run: str) -> None:
+    """Keep the cell sources a stopped run left, and start the lots afresh.
+
+    A city's cell sources are an hour and a half, and a crash at row 34 of 49
+    threw them all away; the lot files knoxlots writes are always made again.
+    """
+    import shutil
+    stamp = _source_stamp(project)
+    try:
+        same = json.loads((src / SOURCE_STAMP).read_text(encoding="utf-8")) == stamp
+    except (OSError, ValueError):
+        same = False
+    if not same:
+        shutil.rmtree(scratch, ignore_errors=True)
+    shutil.rmtree(out, ignore_errors=True)
+    src.mkdir(parents=True, exist_ok=True)
+    (src / SOURCE_STAMP).write_text(json.dumps(stamp), encoding="utf-8")
+    kept = len(list(src.glob("row_*.done")))
+    if kept:
+        knoxlog.log.info("compile %s [%s]: carrying on - %d rows of cells kept from "
+                         "the last run", project.name, run, kept)
+
+
 def compile_rust(project_dir: str, on_progress=None, should_stop=None, workers: int | None = None,
                  on_phase=None) -> int:
     """Compile with knoxlots instead of WorldEd: no bitmap limit, no batches.
@@ -976,24 +999,7 @@ def compile_rust(project_dir: str, on_progress=None, should_stop=None, workers: 
             # either one finds the same folders, and the same lots where the map
             # used to stand have already gone.
             prepare_output(project, run, knoxlots=True)
-            # The cell sources a stopped or failed run left are kept and carried
-            # on from, unless the map has changed since: a city's cell sources
-            # are an hour and a half, and a crash at row 34 of 49 threw them all
-            # away. The lot files knoxlots writes are always made afresh.
-            stamp = _source_stamp(project)
-            try:
-                same = json.loads((src / SOURCE_STAMP).read_text(encoding="utf-8")) == stamp
-            except (OSError, ValueError):
-                same = False
-            if not same:
-                shutil.rmtree(scratch, ignore_errors=True)
-            shutil.rmtree(out, ignore_errors=True)
-            src.mkdir(parents=True, exist_ok=True)
-            (src / SOURCE_STAMP).write_text(json.dumps(stamp), encoding="utf-8")
-            kept = len(list(src.glob("row_*.done")))
-            if kept:
-                knoxlog.log.info("compile %s [%s]: carrying on - %d rows of cells kept from "
-                                 "the last run", project.name, run, kept)
+            _carry_on(project, src, out, scratch, run)
             if should_stop and should_stop():
                 raise knoxstop.Stopped("the compile")
             def phase(text: str, fraction: float) -> None:
